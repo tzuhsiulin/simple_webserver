@@ -7,12 +7,14 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <errno.h>
 
 #define PORT 3000
 #define MAX 1024
 
 # ifdef _USE_SIGCHLD_
-void sigchld_handler() {
+void sigchld_handler() 
+{
 	int child_process_status;
 
 	wait(&child_process_status);
@@ -25,7 +27,8 @@ void sigchld_handler() {
 	}
 }
 # else
-void *zombie_process_handler(void *argu) {
+void *zombie_process_handler(void *argu) 
+{
 	int child_process_status;
 
 	while (1) {
@@ -44,14 +47,25 @@ void *zombie_process_handler(void *argu) {
 void request_handler(int sockfd) {
 	char msg[MAX + 4];
 	char *response = "Hello World";
+	size_t n;
+	int len;
 
 	if (sockfd == -1) {
 		perror(NULL);
 		exit(1);
 	}
 	printf("Connection Accepted!\n");
-	
-	read(sockfd, msg, sizeof(msg));
+
+	while (len < MAX) {	
+		n = read(sockfd, msg, 1);
+		
+# ifdef _USE_SIGCHLD_
+		if (n < 0 && errno == EINTR) {
+			perror("Exception(read)");
+			continue;
+		}
+# endif
+	}
 	printf("sent from client: %s\n", msg);
 
 	write(sockfd, response, sizeof(response));
@@ -93,19 +107,41 @@ int main()
 	pthread_create(&zph_thread, NULL, &zombie_process_handler, NULL);
 # endif
 
-	while (1) {	
-		printf("Listening for connections...\n");
-		listen(sockfd, 5);
-	
-		len = sizeof(struct sockaddr_in);
-		client_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &len);
+		
+REPEAT_LISTEN:
+	printf("Listening for connections...\n");
+	listen(sockfd, 1);
 
-		child_pid = fork();
-		if (child_pid == 0) {
-			request_handler(client_sockfd);
-			exit(1);
-		}
+# ifdef _USE_SIGCHLD_
+	if (errno == EINTR) {
+		perror("Execption(listen)");
+		goto REPEAT_LISTEN; 
+	}
+# endif
+	
+	len = sizeof(struct sockaddr_in);
+
+REPEAT_ACCEPT:
+	client_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &len);
+	
+# ifdef _USER_SIGCHLD_
+	if (client_sockfd < 0 && errno == EINTR) {
+		perror("Exception(accept)");
+		goto REPEAT_LISTEN;
+	}
+# endif
+
+	if (client_sockfd < 0) {
+		perror("Exception(client socket error)");
+		goto REPEAT_ACCEPT;
+	}
+
+	child_pid = fork();
+	if (child_pid == 0) {
+		request_handler(client_sockfd);
+		exit(1);
+	}
+	else {
+		goto REPEAT_LISTEN;
 	}
 }
-
-
