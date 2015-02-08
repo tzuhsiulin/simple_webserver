@@ -1,3 +1,4 @@
 
 all: 
-	gcc -D _USE_SIGCHLD_ -o server server.c
+	gcc -D __USE_SIGCHLD__ -o server server.c
+	#gcc -o server server.c -lpthread
